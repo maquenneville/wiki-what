@@ -4,6 +4,9 @@ a Q&amp;A tool for Wikipedia context-informed GPT chat
 This script creates a chatbot that answers questions based on a specific Wikipedia page and its related pages. The chatbot uses context from the specified Wikipedia page and related pages to provide more accurate and detailed answers.
 
 # How to use
+
+0. Get your OpenAI API key if you don't have one already: https://platform.openai.com/overview
+
 1. Make sure you have installed the required dependencies:
 
 pip install pandas wikipedia openai bs4 lxml nltk
