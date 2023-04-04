@@ -18,15 +18,15 @@ python wikipediachat.py
 
 # Example Usage
 
-Please enter a Wikipedia page title: Albert Einstein
-Do you want the chat data to be saved? (yes/no): no
-Ok, I'm ready for your questions about Albert Einstein.
+>Please enter a Wikipedia page title: Albert Einstein
+>Do you want the chat data to be saved? (yes/no): no
+>Ok, I'm ready for your questions about Albert Einstein.
 
-Question: What is the theory of relativity?
-Answer: The theory of relativity is a scientific theory developed by Albert Einstein that fundamentally changed our understanding of space, time, and gravity. It consists of two parts: the special theory of relativity and the general theory of relativity. The special theory of relativity, published in 1905, deals with objects moving at constant speeds, particularly in the absence of gravity. The general theory of relativity, published in 1915, is a theory of gravitation that describes how massive objects cause curvature in spacetime, which leads to the observed motion of other objects.
+>Question: What is the theory of relativity?
+>Answer: The theory of relativity is a scientific theory developed by Albert Einstein that fundamentally changed our understanding of space, time, and gravity. It >consists of two parts: the special theory of relativity and the general theory of relativity. The special theory of relativity, published in 1905, deals with objects >moving at constant speeds, particularly in the absence of gravity. The general theory of relativity, published in 1915, is a theory of gravitation that describes how >massive objects cause curvature in spacetime, which leads to the observed motion of other objects.
 
-Press enter to ask another question, or enter "exit" to exit: exit
-I hope you learned something about Albert Einstein! Goodbye!
+>Press enter to ask another question, or enter "exit" to exit: exit
+>I hope you learned something about Albert Einstein! Goodbye!
 
 # Notes
 
