@@ -33,4 +33,5 @@ python wikipediachat.py
 
 # Notes
 
+-As the script relies on first creating a table of related sections, the scope of the initial wiki page will vary the data gathering time greatly.  For example, if you use "Sheaf toss", a very niche folk athletic event, it will take a few seconds.  If you use "Fishing", it could take hours.
 -Running into some occasional page errors, currently working on that
