@@ -8,9 +8,11 @@ Created on Mon Apr  3 01:09:37 2023
 import pandas as pd
 from wikipediaContextQAHelpers import *
 
+
+
+
 def main():
     title = input("Please enter a Wikipedia page title: ")
-    keywords = get_keywords(title)
     save_data = input("Do you want the chat data to be saved? (yes/no): ")
     save_data = save_data.strip().lower() == "yes"
     output_path = None
@@ -28,7 +30,7 @@ def main():
     if input_path:
         df = pd.read_csv(input_path)
     else:
-        pages = find_related_pages(title, keywords)
+        pages = find_related_pages(title)
         df = create_dataframe(pages, output_filename=output_path)
     
     print(f"Ok, I'm ready for your questions about {title}.")
@@ -48,6 +50,44 @@ def main():
             break
     
     print(f"I hope you learned something about {title}! Goodbye!")
+    
+    
+def main_pinecone():
+    title = input("Please enter a Wikipedia page title: ")
+    has_data = check_topic_exists_in_pinecone(title)
+    storage_title = title.replace(" ", "_").lower()
+    
+    namespace = "subquennescious"
+
+    if not has_data:
+        print("Gathering the background data for this chat, calculating it's embeddings and loading them into Pinecone. For more narrow focus wikipedia pages, this could take a couple minutes. For wider focus, it could take a while.")
+        pages = find_related_pages(title)
+        page_titles = [page.title for page in pages]
+        save_list_to_txt_file(PAGES_RECORD, page_titles)
+        df = create_dataframe(pages)
+        store_embeddings_in_pinecone(namespace=namespace, dataframe=df, topic_name=storage_title)
+
+    print(f"Ok, I'm ready for your questions about {title}.")
+    
+    
+    while True:
+        question = input("Question: ")
+
+        if question.lower() == "exit":
+            break
+
+        # Fetch context from Pinecone and answer the question
+        context_chunks = fetch_context_from_pinecone(query=question, topic_name=storage_title)
+        answer = answer_query_with_context(question, context_chunks)
+
+        print(f"Answer: {answer}")
+
+        follow_up = input('Press enter to ask another question, or enter "exit" to exit: ')
+
+        if follow_up.lower() == "exit":
+            break
+
+    print(f"I hope you learned something about {title}! Goodbye!")
 
 if __name__ == "__main__":
-    main()
+    main_pinecone()

@@ -19,10 +19,13 @@ from nltk.corpus import stopwords
 from nltk.tokenize import sent_tokenize
 import tiktoken
 import openai
-from openai.error import RateLimitError, InvalidRequestError
+from openai.error import RateLimitError, InvalidRequestError, APIError
 import os
 import sys
 import configparser
+import pinecone
+from pinecone import PineconeProtocolError
+import csv
 
 
 encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
@@ -33,35 +36,29 @@ def count_tokens(text):
     tokens = len(encoding.encode(text))
     return tokens
 
-def get_openai_api_key():
-    if getattr(sys, "frozen", False):
-        # If the script is running as a PyInstaller-generated .exe
-        exe_dir = os.path.dirname(sys.executable)
-    else:
-        # If the script is running as a regular Python script
-        exe_dir = os.path.dirname(os.path.realpath(__file__))
-
+def get_api_keys(config_file):
     config = configparser.ConfigParser()
-    config_path = os.path.join(exe_dir, "config.ini")
-    config.read(config_path)
+    config.read(config_file)
 
-    openai_api_key = config.get("OpenAI", "api_key")
-    return openai_api_key
+    openai_api_key = config.get("API_KEYS", "OpenAI_API_KEY")
+    pinecone_api_key = config.get("API_KEYS", "Pinecone_API_KEY")
+    pinecone_env = config.get("API_KEYS", "Pinecone_ENV")
+    namespace = config.get("API_KEYS", "Namespace")
 
+    return openai_api_key, pinecone_api_key, pinecone_env, namespace
 
-# Set up the OpenAI API client
-openai.api_key = get_openai_api_key()
+openai_api_key, pinecone_api_key, pinecone_env, namespace = get_api_keys('config.ini')
+
+openai.api_key = openai_api_key
 
 
 CHAT_MODEL = "gpt-3.5-turbo"
 EMBEDDING_MODEL = "text-embedding-ada-002"
-COMPLETIONS_API_PARAMS = {
-    "engine": "gpt-3.5-turbo",
-    "temperature": 0.5,
-    "max_tokens": 100,
-    "n": 1,
-    "stop": None,
-}
+PINECONE_NAMESPACE = namespace
+PINECONE_API_KEY = pinecone_api_key
+PINECONE_ENV = pinecone_env
+PAGES_RECORD = 'wiki_page_record.txt'
+
 
 page_cache = {}
 
@@ -69,6 +66,24 @@ wikipedia.set_lang("en")
 wikipedia.set_user_agent("wikipediaapi (https://github.com/wikipedia-api/wikipedia-api)")
 
 
+
+def save_list_to_txt_file(file_name, input_list):
+    with open(file_name, 'a') as file:
+        for item in input_list:
+            file.write(str(item) + ",")
+
+def load_list_from_txt_file(file_name):
+    with open(file_name, 'r') as file:
+        content = file.read()
+        if not content:  # Check if the content is empty
+            return []
+        items = content.split(",")
+        # Remove the last element from the list, as it will be empty due to the trailing comma
+        items.pop()
+        return items
+
+
+saved_pages = load_list_from_txt_file(PAGES_RECORD)
 
 
 def get_keywords(title):
@@ -87,52 +102,48 @@ def filter_titles(titles, keywords):
     return titles
 
 
-def get_wiki_page(title):
-    """
-    Get the Wikipedia page given a title.
-    """
+def get_wiki_page(title: str):
     try:
-        return wikipedia.page(title, auto_suggest=False)
-    except wikipedia.exceptions.DisambiguationError as e:
-        return wikipedia.page(e.options[0], auto_suggest=False)
-    except wikipedia.exceptions.PageError as e:
-        return None
+        page = wikipedia.page(title, auto_suggest=False)
+        return page, False
+    except wikipedia.DisambiguationError as e:
+        return wikipedia.page(e.options[0], auto_suggest=False), True
+    except Exception:
+        return None, False
 
 
-def find_related_pages(title, keywords):
-    initial_page = get_wiki_page(title)
-    if initial_page is None:
+
+def find_related_pages(title, depth=2):
+
+    initial_page, _ = get_wiki_page(title)
+    titles_so_far = [title]
+    linked_pages = recursively_find_all_pages(initial_page.links, titles_so_far, depth-1)
+    total_pages = [initial_page] + linked_pages
+
+    return total_pages
+
+
+def recursively_find_all_pages(titles, titles_so_far, depth=2):
+    
+    global saved_pages
+
+    if depth <= 0:
         return []
-
-    titles_so_far = {title}
-    all_pages = [initial_page]
-    linked_pages = recursively_find_all_pages(initial_page.links, titles_so_far, keywords)
-
-    return all_pages + linked_pages
-
-
-def recursively_find_all_pages(titles, titles_so_far, keywords):
-    all_pages = []
-
-    titles = list(set(titles) - titles_so_far)
-    titles = filter_titles(titles, keywords)
-    titles_so_far.update(titles)
+    pages = []
     for title in titles:
-        try:
-            page = get_wiki_page(title)
-        except PageError:
-            continue
-        
-        if page is None:
-            continue
-        all_pages.append(page)
+        if title not in titles_so_far and title not in saved_pages:
+            titles_so_far.append(title)
+            page, is_disambiguation = get_wiki_page(title)
+            if page is None:
+                continue
+            print(title)
+            pages.append(page)
+            if not is_disambiguation:
+                new_pages = recursively_find_all_pages(page.links, titles_so_far, depth-1)
+                pages.extend(new_pages)
 
-        new_pages = recursively_find_all_pages(page.links, titles_so_far, keywords)
-        for pg in new_pages:
-            if pg.title not in [p.title for p in all_pages]:
-                all_pages.append(pg)
-        titles_so_far.update(page.links)
-    return all_pages
+    return pages
+
 
 
 def reduce_long(long_text: str, long_text_tokens: bool = False, max_len: int = 590) -> str:
@@ -211,21 +222,29 @@ def extract_sections(
 
 
 def get_embedding(text: str, model: str=EMBEDDING_MODEL):
-    result = openai.Embedding.create(
-      model=model,
-      input=text
-    )
+    while True:
+        try:
+            result = openai.Embedding.create(
+              model=model,
+              input=text
+            )
+            break
+        except (APIError, RateLimitError):
+            print("OpenAI had an issue, trying again in a few seconds...")
+            time.sleep(10)
     return result["data"][0]["embedding"]
 
 
 
 def compute_doc_embeddings(df: pd.DataFrame, model: str = EMBEDDING_MODEL):
     embeddings = []
+    segment = 0
     for _, row in df.iterrows():
         text = row["title"] + " " + row["heading"] + " " + row["content"]
         embedding = get_embedding(text, model)
         embeddings.append(embedding)
-        time.sleep(1)
+        segment += 1
+        print(f"Embedded segment {segment}")
 
     embedding_columns = {f"embedding{idx}": [embedding[idx] for embedding in embeddings] for idx in range(len(embeddings[0]))}
     embedding_df = pd.DataFrame(embedding_columns)
@@ -255,6 +274,7 @@ def load_embeddings(df: pd.DataFrame):
 def create_dataframe(pages, output_filename=None):
     res = []
     for page in pages:
+        print(page.title)
         res += extract_sections(page.content, page.title)
 
     df = pd.DataFrame(res, columns=["title", "heading", "content", "tokens"])
@@ -300,6 +320,149 @@ def order_document_sections_by_query_similarity(query, df):
 
     return document_similarities
 
+### PINECONE FUNCTIONS ###
+
+def store_embeddings_in_pinecone(namespace=PINECONE_NAMESPACE, pinecone_api_key=PINECONE_API_KEY, pinecone_env=PINECONE_ENV, csv_filepath=None, topic_name=None, dataframe=None):
+    # Initialize Pinecone
+    pinecone.init(api_key=pinecone_api_key, environment=pinecone_env)
+
+    # Instantiate Pinecone's Index
+    pinecone_index = pinecone.Index(index_name=namespace)
+    
+    print(len(dataframe.columns))
+    
+    if dataframe is not None and not dataframe.empty:
+        batch_size = 80
+        vectors_to_upsert = []
+        batch_count = 0
+
+        for index, row in dataframe.iterrows():
+            context_chunk = row["content"]
+            print(context_chunk)
+            vector = [float(row[f"embedding{i}"]) for i in range(1536)]
+            
+            idx = f"wiki_{index}"
+            topic_name = f"wiki_{topic_name}"
+            vectors_to_upsert.append({
+                "id": idx,
+                "values": vector,
+                "metadata": {"topic_name": topic_name, "context": context_chunk}
+            })
+
+            # Upsert when the batch is full or it's the last row
+            if len(vectors_to_upsert) == batch_size or index == len(dataframe) - 1:
+                while True:
+                    print(f"Attempting upsert for batch {batch_count + 1}...") 
+                    try:
+                        upsert_response = pinecone_index.upsert(
+                            vectors=vectors_to_upsert,
+                            namespace=namespace
+                        )
+
+                        print(f"Upserted batch {batch_count + 1}: {len(vectors_to_upsert)} vectors")
+                        batch_count += 1
+                        vectors_to_upsert = []
+                        break
+
+                    except pinecone.core.client.exceptions.ApiException:
+                        print("Pinecone is a little overwhelmed, trying again in a few seconds...")
+                        time.sleep(10)
+
+    elif csv_filepath:
+        # Read embeddings and metadata from the CSV file
+        with open(csv_filepath, newline="", encoding="utf-8") as csvfile:
+            reader = csv.reader(csvfile)
+            header = next(reader)  # Skip the header row
+
+            batch_size = 80
+            vectors_to_upsert = []
+            batch_count = 0
+
+            for row in reader:
+                row_dict = {col_name: value for col_name, value in zip(header, row)}
+                idx, context_chunk = row_dict["index"], row_dict["context"]
+                vector = [float(row_dict[f"embedding{i}"]) for i in range(len(row) - 2)]
+
+                
+                topic_name = f"wiki_{topic_name}"
+                vectors_to_upsert.append({
+                    "id": idx,
+                    "values": vector,
+                    "metadata": {"topic_name": topic_name, "context": context_chunk}
+                })
+
+                # Upsert when the batch is full or it's the last row
+                if len(vectors_to_upsert) == batch_size or idx == header[-1]:
+                    upsert_response = index.upsert(
+                        vectors=vectors_to_upsert,
+                        namespace=namespace
+                    )
+
+                    print(f"Upserted batch {batch_count + 1}: {len(vectors_to_upsert)} rows")
+                    batch_count += 1
+                    vectors_to_upsert = []
+    else:
+        print("No CSV filepath to retrieve embeddings")
+
+
+def fetch_context_from_pinecone(query, topic_name, top_n=5, namespace=PINECONE_NAMESPACE, pinecone_api_key=PINECONE_API_KEY, pinecone_env=PINECONE_ENV):
+    # Initialize Pinecone
+    pinecone.init(api_key=pinecone_api_key, environment=pinecone_env)
+
+    # Generate the query embedding
+    query_embedding = get_embedding(query)
+
+    # Query Pinecone for the most similar embeddings
+    pinecone_index = pinecone.Index(index_name=namespace)
+    
+    while True:
+        try:
+            query_response = pinecone_index.query(
+                namespace=namespace,
+                top_k=top_n,
+                include_values=False,
+                include_metadata=True,
+                vector=query_embedding,
+                filter= {"topic_name": topic_name}
+            )
+            break
+        
+        except PineconeProtocolError:
+            print("Pinecone needs a moment....")
+            time.sleep(3)
+            continue
+    print(query_response)
+    # Retrieve metadata for the relevant embeddings
+    context_chunks = [match['metadata']['context'] for match in query_response['matches']]
+
+    return context_chunks
+
+
+
+def check_topic_exists_in_pinecone(topic_name: str, namespace: str=PINECONE_NAMESPACE, pinecone_api_key: str=PINECONE_API_KEY, pinecone_env: str=PINECONE_ENV) -> bool:
+    pinecone.init(api_key=pinecone_api_key, environment=pinecone_env)
+
+    topic_name = f"wiki_{topic_name}"
+    metadata_filter = {"topic_name": topic_name}
+
+    index = pinecone.Index(namespace)
+    query_embedding = get_embedding(topic_name)
+
+    query_response = index.query(
+        namespace=namespace,
+        top_k=1,
+        include_values=False,
+        include_metadata=False,
+        filter=metadata_filter,
+        vector=query_embedding
+    )
+
+
+
+    return len(query_response['matches']) != 0
+
+
+### END PINECONE
 
 def generate_response(
     messages, temperature=0.5, n=1, max_tokens=4000, frequency_penalty=0
@@ -352,8 +515,8 @@ def generate_response(
 def construct_prompt(
     question: str,
     df: pd.DataFrame,
-    separator: str = "\n",
-    max_section_len: int = 2000,  # Leave some space for the header and question
+    separator: str = "\n*",
+    max_section_len: int = 1000,  # Leave some space for the header and question
 ):
     """
     Fetch relevant
