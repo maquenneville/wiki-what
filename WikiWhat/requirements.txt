@@ -1,0 +1,8 @@
+pandas
+requests
+wikipedia-api
+nltk
+tiktoken
+openai
+pinecone-client
+tqdm
