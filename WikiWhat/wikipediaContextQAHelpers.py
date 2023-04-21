@@ -26,6 +26,7 @@ import configparser
 import pinecone
 from pinecone import PineconeProtocolError
 import csv
+from tqdm import tqdm
 
 
 encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
@@ -68,12 +69,12 @@ wikipedia.set_user_agent("wikipediaapi (https://github.com/wikipedia-api/wikiped
 
 
 def save_list_to_txt_file(file_name, input_list):
-    with open(file_name, 'a') as file:
+    with open(file_name, 'a', encoding='utf-8', errors='ignore') as file:
         for item in input_list:
             file.write(str(item) + ",")
 
 def load_list_from_txt_file(file_name):
-    with open(file_name, 'r') as file:
+    with open(file_name, 'r', encoding='utf-8', errors='ignore') as file:
         content = file.read()
         if not content:  # Check if the content is empty
             return []
@@ -85,21 +86,6 @@ def load_list_from_txt_file(file_name):
 
 saved_pages = load_list_from_txt_file(PAGES_RECORD)
 
-
-def get_keywords(title):
-    filler_words = set(stopwords.words('english'))
-    words = title.lower().split()
-    filtered_words = [word for word in words if word not in filler_words]
-    return filtered_words
-
-
-
-def filter_titles(titles, keywords):
-    """
-    Get the titles which are related to the given keywords
-    """
-    titles = [title for title in titles if any(keyword.lower() in title.lower() for keyword in keywords)]
-    return titles
 
 
 def get_wiki_page(title: str):
@@ -236,21 +222,24 @@ def get_embedding(text: str, model: str=EMBEDDING_MODEL):
 
 
 
+
+
 def compute_doc_embeddings(df: pd.DataFrame, model: str = EMBEDDING_MODEL):
     embeddings = []
     segment = 0
-    for _, row in df.iterrows():
+    for _, row in tqdm(df.iterrows(), total=df.shape[0], desc="Embedding segments"):
         text = row["title"] + " " + row["heading"] + " " + row["content"]
         embedding = get_embedding(text, model)
         embeddings.append(embedding)
         segment += 1
-        print(f"Embedded segment {segment}")
+        # print(f"Embedded segment {segment}")  # Remove this line as tqdm will provide progress updates
 
     embedding_columns = {f"embedding{idx}": [embedding[idx] for embedding in embeddings] for idx in range(len(embeddings[0]))}
     embedding_df = pd.DataFrame(embedding_columns)
     df = pd.concat([df, embedding_df], axis=1)
 
     return df
+
 
 
 
@@ -290,37 +279,57 @@ def create_dataframe(pages, output_filename=None):
 
 
 
-def vector_similarity(x, y):
-    """
-    Returns the similarity between two vectors.
-    
-    Because OpenAI Embeddings are normalized to length 1, the cosine similarity is the same as the dot product.
-    """
-    return np.dot(np.array(x), np.array(y))
-
-
-
-def order_document_sections_by_query_similarity(query, df):
-    """
-    Find the query embedding for the supplied query, and compare it against all of the pre-calculated document embeddings
-    to find the most relevant sections.
-    
-    Return the list of document sections, sorted by relevance in descending order.
-    """
-    query_embedding = get_embedding(query)
-    embedding_cols = [col for col in df.columns if col.startswith("embedding")]
-
-    document_similarities = sorted([
-        (
-            vector_similarity(query_embedding, [row[col] for col in embedding_cols]),
-            index
-        )
-        for index, row in df.iterrows()
-    ], reverse=True)
-
-    return document_similarities
-
 ### PINECONE FUNCTIONS ###
+
+# =============================================================================
+# def store_embeddings_in_pinecone(namespace=PINECONE_NAMESPACE, pinecone_api_key=PINECONE_API_KEY, pinecone_env=PINECONE_ENV, csv_filepath=None, topic_name=None, dataframe=None):
+#     # Initialize Pinecone
+#     pinecone.init(api_key=pinecone_api_key, environment=pinecone_env)
+# 
+#     # Instantiate Pinecone's Index
+#     pinecone_index = pinecone.Index(index_name=namespace)
+#     
+#     
+#     
+#     if dataframe is not None and not dataframe.empty:
+#         batch_size = 80
+#         vectors_to_upsert = []
+#         batch_count = 0
+#         topic_name = f"wiki_{topic_name}"
+# 
+#         for index, row in dataframe.iterrows():
+#             context_chunk = row["content"]
+#             
+#             vector = [float(row[f"embedding{i}"]) for i in range(1536)]
+#             
+#             idx = f"wiki_{index}"
+#             
+#             metadata = {"topic_name": topic_name, "context": context_chunk}
+#             vectors_to_upsert.append((idx, vector, metadata))
+# 
+#             # Upsert when the batch is full or it's the last row
+#             if len(vectors_to_upsert) == batch_size or index == len(dataframe) - 1:
+#                 while True:
+#                      
+#                     try:
+#                         upsert_response = pinecone_index.upsert(
+#                             vectors=vectors_to_upsert,
+#                             namespace=namespace
+#                         )
+# 
+#                         batch_count += 1
+#                         vectors_to_upsert = []
+#                         break
+# 
+#                     except pinecone.core.client.exceptions.ApiException:
+#                         print("Pinecone is a little overwhelmed, trying again in a few seconds...")
+#                         time.sleep(10)
+# 
+#     else:
+#         print("No dataframe to retrieve embeddings")
+# =============================================================================
+        
+
 
 def store_embeddings_in_pinecone(namespace=PINECONE_NAMESPACE, pinecone_api_key=PINECONE_API_KEY, pinecone_env=PINECONE_ENV, csv_filepath=None, topic_name=None, dataframe=None):
     # Initialize Pinecone
@@ -328,84 +337,60 @@ def store_embeddings_in_pinecone(namespace=PINECONE_NAMESPACE, pinecone_api_key=
 
     # Instantiate Pinecone's Index
     pinecone_index = pinecone.Index(index_name=namespace)
-    
-    print(len(dataframe.columns))
-    
+
     if dataframe is not None and not dataframe.empty:
         batch_size = 80
         vectors_to_upsert = []
         batch_count = 0
+        topic_name = f"wiki_{topic_name}"
+
+        # Calculate the total number of batches
+        total_batches = -(-len(dataframe) // batch_size)
+
+        # Create a tqdm progress bar object
+        progress_bar = tqdm(total=total_batches, desc="Upserting batches")
 
         for index, row in dataframe.iterrows():
             context_chunk = row["content"]
-            print(context_chunk)
+            
             vector = [float(row[f"embedding{i}"]) for i in range(1536)]
             
             idx = f"wiki_{index}"
-            topic_name = f"wiki_{topic_name}"
-            vectors_to_upsert.append({
-                "id": idx,
-                "values": vector,
-                "metadata": {"topic_name": topic_name, "context": context_chunk}
-            })
+            
+            metadata = {"topic_name": topic_name, "context": context_chunk}
+            vectors_to_upsert.append((idx, vector, metadata))
 
             # Upsert when the batch is full or it's the last row
             if len(vectors_to_upsert) == batch_size or index == len(dataframe) - 1:
                 while True:
-                    print(f"Attempting upsert for batch {batch_count + 1}...") 
+                     
                     try:
                         upsert_response = pinecone_index.upsert(
                             vectors=vectors_to_upsert,
                             namespace=namespace
                         )
 
-                        print(f"Upserted batch {batch_count + 1}: {len(vectors_to_upsert)} vectors")
                         batch_count += 1
                         vectors_to_upsert = []
+
+                        # Update the progress bar
+                        progress_bar.update(1)
                         break
 
                     except pinecone.core.client.exceptions.ApiException:
                         print("Pinecone is a little overwhelmed, trying again in a few seconds...")
                         time.sleep(10)
 
-    elif csv_filepath:
-        # Read embeddings and metadata from the CSV file
-        with open(csv_filepath, newline="", encoding="utf-8") as csvfile:
-            reader = csv.reader(csvfile)
-            header = next(reader)  # Skip the header row
+        # Close the progress bar after completing all upserts
+        progress_bar.close()
 
-            batch_size = 80
-            vectors_to_upsert = []
-            batch_count = 0
-
-            for row in reader:
-                row_dict = {col_name: value for col_name, value in zip(header, row)}
-                idx, context_chunk = row_dict["index"], row_dict["context"]
-                vector = [float(row_dict[f"embedding{i}"]) for i in range(len(row) - 2)]
-
-                
-                topic_name = f"wiki_{topic_name}"
-                vectors_to_upsert.append({
-                    "id": idx,
-                    "values": vector,
-                    "metadata": {"topic_name": topic_name, "context": context_chunk}
-                })
-
-                # Upsert when the batch is full or it's the last row
-                if len(vectors_to_upsert) == batch_size or idx == header[-1]:
-                    upsert_response = index.upsert(
-                        vectors=vectors_to_upsert,
-                        namespace=namespace
-                    )
-
-                    print(f"Upserted batch {batch_count + 1}: {len(vectors_to_upsert)} rows")
-                    batch_count += 1
-                    vectors_to_upsert = []
     else:
-        print("No CSV filepath to retrieve embeddings")
+        print("No dataframe to retrieve embeddings")
 
 
-def fetch_context_from_pinecone(query, topic_name, top_n=5, namespace=PINECONE_NAMESPACE, pinecone_api_key=PINECONE_API_KEY, pinecone_env=PINECONE_ENV):
+
+
+def fetch_context_from_pinecone(query, topic_name, top_n=3, namespace=PINECONE_NAMESPACE, pinecone_api_key=PINECONE_API_KEY, pinecone_env=PINECONE_ENV):
     # Initialize Pinecone
     pinecone.init(api_key=pinecone_api_key, environment=pinecone_env)
 
@@ -415,6 +400,7 @@ def fetch_context_from_pinecone(query, topic_name, top_n=5, namespace=PINECONE_N
     # Query Pinecone for the most similar embeddings
     pinecone_index = pinecone.Index(index_name=namespace)
     
+    topic_name = f"wiki_{topic_name}"
     while True:
         try:
             query_response = pinecone_index.query(
@@ -422,8 +408,8 @@ def fetch_context_from_pinecone(query, topic_name, top_n=5, namespace=PINECONE_N
                 top_k=top_n,
                 include_values=False,
                 include_metadata=True,
-                vector=query_embedding,
-                filter= {"topic_name": topic_name}
+                vector=query_embedding
+                #filter={"topic_name": {"$eq": topic_name}}
             )
             break
         
@@ -431,11 +417,13 @@ def fetch_context_from_pinecone(query, topic_name, top_n=5, namespace=PINECONE_N
             print("Pinecone needs a moment....")
             time.sleep(3)
             continue
-    print(query_response)
+    
     # Retrieve metadata for the relevant embeddings
     context_chunks = [match['metadata']['context'] for match in query_response['matches']]
+    print(context_chunks)
 
     return context_chunks
+
 
 
 
@@ -443,7 +431,7 @@ def check_topic_exists_in_pinecone(topic_name: str, namespace: str=PINECONE_NAME
     pinecone.init(api_key=pinecone_api_key, environment=pinecone_env)
 
     topic_name = f"wiki_{topic_name}"
-    metadata_filter = {"topic_name": topic_name}
+    metadata_filter = {"topic_name": {"$eq": topic_name}}
 
     index = pinecone.Index(namespace)
     query_embedding = get_embedding(topic_name)
@@ -452,14 +440,17 @@ def check_topic_exists_in_pinecone(topic_name: str, namespace: str=PINECONE_NAME
         namespace=namespace,
         top_k=1,
         include_values=False,
-        include_metadata=False,
+        include_metadata=True,
         filter=metadata_filter,
         vector=query_embedding
     )
-
-
+    
+    print(f"query_response: {query_response}")
+    print(f"Number of matches: {len(query_response['matches'])}")
 
     return len(query_response['matches']) != 0
+
+
 
 
 ### END PINECONE
@@ -514,35 +505,22 @@ def generate_response(
 
 def construct_prompt(
     question: str,
-    df: pd.DataFrame,
+    topic_name: str,
     separator: str = "\n*",
-    max_section_len: int = 1000,  # Leave some space for the header and question
+    max_section_len: int = 1000 # Leave some space for the header and question
+    
 ):
     """
     Fetch relevant
     """
-    most_relevant_document_sections = order_document_sections_by_query_similarity(
-        question, df
-    )
+    most_relevant_document_sections = fetch_context_from_pinecone(question, topic_name)
 
-    chosen_sections = []
-    chosen_sections_len = 0
-    chosen_sections_indexes = []
+    chosen_sections = [separator + section for section in most_relevant_document_sections]
 
-    for _, section_index in most_relevant_document_sections:
-        # Add contexts until we run out of space.
-        document_section = df.loc[section_index]
-
-        chosen_sections_len += document_section.tokens + len(separator)
-        if chosen_sections_len > max_section_len:
-            break
-
-        chosen_sections.append(separator + document_section.content.replace("\n", " "))
-        chosen_sections_indexes.append(str(section_index))
 
     # Useful diagnostic information
     print(f"Selected {len(chosen_sections)} document sections:")
-    print("\n".join(chosen_sections_indexes))
+
 
     header = (
         """Answer the question as truthfully as possible using the provided context. If the answer is not contained within the text below, attempt to use the context and your knowledge to give an answer.  If the context cannot help you find an answer, say "I don't know."\n\nContext:\n"""
@@ -561,10 +539,10 @@ def construct_prompt(
 
 def answer_query_with_context(
     query: str,
-    df: pd.DataFrame,
+    topic_name: str,
     show_prompt=False
 ):
-    messages = construct_prompt(query, df)
+    messages = construct_prompt(query, topic_name)
 
     if show_prompt:
         print(messages)
