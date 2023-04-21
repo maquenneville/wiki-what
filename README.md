@@ -12,17 +12,18 @@ Then, set up your Pinecone account, create an Index with this layout:
 - pod type: p1
 Get your API key, Index environment and index name.
 
-Once you have your OpenAI key and your Pinecone env/key/name, enter then into their respective places in the config.ini file.
+Once you have your OpenAI key and your Pinecone env/key/name, enter then into their respective places in the config.ini file.  Then, open Command Prompt and cd into the cloned directory.
 
 1. Make sure you have installed the required dependencies:
 
-pip install pandas wikipedia openai bs4 lxml nltk pinecone-client tiktoken
+pip install -r requirements.txt
+
 
 2. Run the script:
 
 python wikipediachat.py
 
-3. Follow the prompts to input a Wikipedia page title, and choose whether you want to save or load chat data.
+3. Follow the prompts to input a Wikipedia page title.  If needed, it will then download the relevant wikipedia pages, embedd the context, and store all the chunks into the Pinecone index.
 
 4. Ask questions related to the Wikipedia page title you provided. To exit the chatbot, type "exit".
 
