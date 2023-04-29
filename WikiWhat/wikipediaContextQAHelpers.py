@@ -14,8 +14,6 @@ import requests
 import re
 from typing import Set
 import numpy as np
-import nltk
-from nltk.corpus import stopwords
 from nltk.tokenize import sent_tokenize
 import tiktoken
 import openai
@@ -27,6 +25,9 @@ import pinecone
 from pinecone import PineconeProtocolError
 import csv
 from tqdm import tqdm
+import asyncio
+from tqdm.asyncio import tqdm as async_tqdm
+import threading
 
 
 encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
@@ -44,21 +45,24 @@ def get_api_keys(config_file):
     openai_api_key = config.get("API_KEYS", "OpenAI_API_KEY")
     pinecone_api_key = config.get("API_KEYS", "Pinecone_API_KEY")
     pinecone_env = config.get("API_KEYS", "Pinecone_ENV")
-    namespace = config.get("API_KEYS", "Namespace")
+    namespace = config.get("API_KEYS", "Pinecone_Namespace")
+    index = config.get("API_KEYS", "Pinecone_Index")
 
-    return openai_api_key, pinecone_api_key, pinecone_env, namespace
+    return openai_api_key, pinecone_api_key, pinecone_env, namespace, index
 
-openai_api_key, pinecone_api_key, pinecone_env, namespace = get_api_keys('config.ini')
+openai_api_key, pinecone_api_key, pinecone_env, namespace, index = get_api_keys('config.ini')
 
 openai.api_key = openai_api_key
 
 
-CHAT_MODEL = "gpt-3.5-turbo"
+SMART_CHAT_MODEL = "gpt-4"
+FAST_CHAT_MODEL = "gpt-3.5-turbo"
 EMBEDDING_MODEL = "text-embedding-ada-002"
 PINECONE_NAMESPACE = namespace
 PINECONE_API_KEY = pinecone_api_key
 PINECONE_ENV = pinecone_env
 PAGES_RECORD = 'wiki_page_record.txt'
+PINECONE_INDEX = index
 
 
 page_cache = {}
@@ -132,6 +136,7 @@ def recursively_find_all_pages(titles, titles_so_far, depth=2):
 
 
 
+# Reduces the length of long text to the maximum token length specified
 def reduce_long(long_text: str, long_text_tokens: bool = False, max_len: int = 590) -> str:
     if not long_text_tokens:
         long_text_tokens = count_tokens(long_text)
@@ -145,11 +150,13 @@ def reduce_long(long_text: str, long_text_tokens: bool = False, max_len: int = 5
 
     return long_text
 
+# List of categories to be discarded when extracting sections from the wiki_text
 discard_categories = ['See also', 'References', 'External links', 'Further reading', "Footnotes",
     "Bibliography", "Sources", "Citations", "Literature", "Footnotes", "Notes and references",
     "Photo gallery", "Works cited", "Photos", "Gallery", "Notes", "References and sources",
-    "References and notes",]
+    "References and notes", "ISBN"]
 
+# Function to extract sections from the wiki_text based on the specified conditions
 def extract_sections(
     wiki_text: str,
     title: str,
@@ -159,6 +166,7 @@ def extract_sections(
     if len(wiki_text) == 0:
         return []
 
+    # Identify headings in the wiki_text
     headings = re.findall("==+ .* ==+", wiki_text)
     for heading in headings:
         wiki_text = wiki_text.replace(heading, "==+ !! ==+")
@@ -166,6 +174,7 @@ def extract_sections(
     contents = [c.strip() for c in contents]
     assert len(headings) == len(contents) - 1
 
+    # Process the first content section
     cont = contents.pop(0).strip()
     outputs = [(title, "Summary", cont, count_tokens(cont)+4)]
 
@@ -173,6 +182,8 @@ def extract_sections(
     keep_group_level = max_level
     remove_group_level = max_level
     nheadings, ncontents = [], []
+    
+    # Iterate through the headings and contents, filtering out discard categories
     for heading, content in zip(headings, contents):
         plain_heading = " ".join(heading.split(" ")[1:-1])
         num_equals = len(heading.split(" ")[0])
@@ -191,6 +202,7 @@ def extract_sections(
         ncontents.append(content)
         remove_group_level = max_level
 
+    # Calculate the token count for each content section
     ncontent_ntokens = [
         count_tokens(c)
         + 3
@@ -199,6 +211,7 @@ def extract_sections(
         for h, c in zip(nheadings, ncontents)
     ]
 
+    # Combine the title, heading, content, and token count for each section, ensuring the content does not exceed the max_len
     outputs += [(title, h, c, t) if t < max_len
                 else (title, h, reduce_long(c, max_len=max_len), max_len)
                 for h, c, t in zip(nheadings, ncontents, ncontent_ntokens)]
@@ -224,22 +237,63 @@ def get_embedding(text: str, model: str=EMBEDDING_MODEL):
 
 
 
-def compute_doc_embeddings(df: pd.DataFrame, model: str = EMBEDDING_MODEL):
-    embeddings = []
-    segment = 0
-    for _, row in tqdm(df.iterrows(), total=df.shape[0], desc="Embedding segments"):
-        text = row["title"] + " " + row["heading"] + " " + row["content"]
-        embedding = get_embedding(text, model)
-        embeddings.append(embedding)
-        segment += 1
-        # print(f"Embedded segment {segment}")  # Remove this line as tqdm will provide progress updates
+# =============================================================================
+# def compute_doc_embeddings(df: pd.DataFrame, model: str = EMBEDDING_MODEL):
+#     embeddings = []
+#     segment = 0
+#     for _, row in tqdm(df.iterrows(), total=df.shape[0], desc="Embedding segments"):
+#         text = row["title"] + " " + row["heading"] + " " + row["content"]
+#         embedding = get_embedding(text, model)
+#         embeddings.append(embedding)
+#         segment += 1
+#         # print(f"Embedded segment {segment}")  # Remove this line as tqdm will provide progress updates
+# 
+#     embedding_columns = {f"embedding{idx}": [embedding[idx] for embedding in embeddings] for idx in range(len(embeddings[0]))}
+#     embedding_df = pd.DataFrame(embedding_columns)
+#     df = pd.concat([df, embedding_df], axis=1)
+# 
+#     return df
+# =============================================================================
 
+
+
+# This function is a helper function that runs the get_embedding function asynchronously.
+async def get_embedding_async(text, model):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, get_embedding, text, model)
+
+# This function computes the document embeddings for a given dataframe containing Wikipedia segments.
+async def compute_doc_embeddings(df: pd.DataFrame, model: str = EMBEDDING_MODEL):
+    # This helper function creates an embedding for a given row and updates the progress bar.
+    async def embed_row(row, progress):
+        text = row["title"] + " " + row["heading"] + " " + row["content"]
+        embedding = await get_embedding_async(text, model)
+        progress.update(1)
+        return embedding
+
+    # Initialize the progress bar for displaying the progress of the embedding process.
+    progress = tqdm(total=df.shape[0], desc="Embedding segments")
+    # Create a list of tasks for each row in the dataframe to compute embeddings.
+    tasks = [embed_row(row, progress) for _, row in df.iterrows()]
+    # Run the tasks asynchronously and gather the results.
+    embeddings = await asyncio.gather(*tasks)
+    # Close the progress bar after completion.
+    progress.close()
+
+    # Create a new dataframe with the computed embeddings.
     embedding_columns = {f"embedding{idx}": [embedding[idx] for embedding in embeddings] for idx in range(len(embeddings[0]))}
     embedding_df = pd.DataFrame(embedding_columns)
+    # Concatenate the original dataframe with the embeddings dataframe.
     df = pd.concat([df, embedding_df], axis=1)
 
     return df
 
+
+
+
+
+# To run the function, wrap it with asyncio.run()
+# df = asyncio.run(compute_doc_embeddings(df))
 
 
 
@@ -270,7 +324,7 @@ def create_dataframe(pages, output_filename=None):
     df = df[df.tokens > 40]
     df = df.drop_duplicates(["title", "heading"])
     df = df.reset_index().drop("index", axis=1)
-    df = compute_doc_embeddings(df)
+    df = asyncio.run(compute_doc_embeddings(df))
 
     if output_filename:
         df.to_csv(output_filename, index=False)
@@ -331,13 +385,14 @@ def create_dataframe(pages, output_filename=None):
         
 
 
-def store_embeddings_in_pinecone(namespace=PINECONE_NAMESPACE, pinecone_api_key=PINECONE_API_KEY, pinecone_env=PINECONE_ENV, csv_filepath=None, topic_name=None, dataframe=None):
+def store_embeddings_in_pinecone(index=PINECONE_INDEX, namespace=PINECONE_NAMESPACE, pinecone_api_key=PINECONE_API_KEY, pinecone_env=PINECONE_ENV, csv_filepath=None, topic_name=None, dataframe=None):
     # Initialize Pinecone
     pinecone.init(api_key=pinecone_api_key, environment=pinecone_env)
 
     # Instantiate Pinecone's Index
-    pinecone_index = pinecone.Index(index_name=namespace)
+    pinecone_index = pinecone.Index(index_name=index)
 
+    # Check if a dataframe is provided and is not empty
     if dataframe is not None and not dataframe.empty:
         batch_size = 80
         vectors_to_upsert = []
@@ -348,23 +403,27 @@ def store_embeddings_in_pinecone(namespace=PINECONE_NAMESPACE, pinecone_api_key=
         total_batches = -(-len(dataframe) // batch_size)
 
         # Create a tqdm progress bar object
-        progress_bar = tqdm(total=total_batches, desc="Upserting batches")
+        progress_bar = tqdm(total=total_batches, desc="Loading info into Pinecone")
 
+        # Iterate through each row in the dataframe
         for index, row in dataframe.iterrows():
             context_chunk = row["content"]
             
+            # Create a vector from the embeddings
             vector = [float(row[f"embedding{i}"]) for i in range(1536)]
             
+            # Create an index for Pinecone
             idx = f"wiki_{index}"
             
+            # Prepare metadata for upsert
             metadata = {"topic_name": topic_name, "context": context_chunk}
             vectors_to_upsert.append((idx, vector, metadata))
 
             # Upsert when the batch is full or it's the last row
             if len(vectors_to_upsert) == batch_size or index == len(dataframe) - 1:
                 while True:
-                     
                     try:
+                        # Upsert the batch of vectors to Pinecone
                         upsert_response = pinecone_index.upsert(
                             vectors=vectors_to_upsert,
                             namespace=namespace
@@ -390,27 +449,29 @@ def store_embeddings_in_pinecone(namespace=PINECONE_NAMESPACE, pinecone_api_key=
 
 
 
-def fetch_context_from_pinecone(query, topic_name, top_n=3, namespace=PINECONE_NAMESPACE, pinecone_api_key=PINECONE_API_KEY, pinecone_env=PINECONE_ENV):
+
+def fetch_context_from_pinecone(query, top_n=3, index=PINECONE_INDEX, namespace=PINECONE_NAMESPACE, pinecone_api_key=PINECONE_API_KEY, pinecone_env=PINECONE_ENV):
     # Initialize Pinecone
     pinecone.init(api_key=pinecone_api_key, environment=pinecone_env)
 
     # Generate the query embedding
     query_embedding = get_embedding(query)
 
-    # Query Pinecone for the most similar embeddings
-    pinecone_index = pinecone.Index(index_name=namespace)
+    # Instantiate Pinecone's Index
+    pinecone_index = pinecone.Index(index_name=index)
     
-    topic_name = f"wiki_{topic_name}"
+    # Try querying Pinecone for the most similar embeddings until successful
     while True:
         try:
+            # Query Pinecone with the query_embedding, asking for top_n matches
             query_response = pinecone_index.query(
                 namespace=namespace,
                 top_k=top_n,
                 include_values=False,
                 include_metadata=True,
                 vector=query_embedding
-                #filter={"topic_name": {"$eq": topic_name}}
             )
+            # Break the loop if the query is successful
             break
         
         except PineconeProtocolError:
@@ -420,20 +481,20 @@ def fetch_context_from_pinecone(query, topic_name, top_n=3, namespace=PINECONE_N
     
     # Retrieve metadata for the relevant embeddings
     context_chunks = [match['metadata']['context'] for match in query_response['matches']]
-    print(context_chunks)
-
+    
     return context_chunks
 
 
 
 
-def check_topic_exists_in_pinecone(topic_name: str, namespace: str=PINECONE_NAMESPACE, pinecone_api_key: str=PINECONE_API_KEY, pinecone_env: str=PINECONE_ENV) -> bool:
+
+def check_topic_exists_in_pinecone(topic_name: str, index:str=PINECONE_INDEX, namespace: str=PINECONE_NAMESPACE, pinecone_api_key: str=PINECONE_API_KEY, pinecone_env: str=PINECONE_ENV) -> bool:
     pinecone.init(api_key=pinecone_api_key, environment=pinecone_env)
 
     topic_name = f"wiki_{topic_name}"
     metadata_filter = {"topic_name": {"$eq": topic_name}}
 
-    index = pinecone.Index(namespace)
+    index = pinecone.Index(index)
     query_embedding = get_embedding(topic_name)
 
     query_response = index.query(
@@ -445,8 +506,7 @@ def check_topic_exists_in_pinecone(topic_name: str, namespace: str=PINECONE_NAME
         vector=query_embedding
     )
     
-    print(f"query_response: {query_response}")
-    print(f"Number of matches: {len(query_response['matches'])}")
+
 
     return len(query_response['matches']) != 0
 
@@ -456,21 +516,22 @@ def check_topic_exists_in_pinecone(topic_name: str, namespace: str=PINECONE_NAME
 ### END PINECONE
 
 def generate_response(
-    messages, temperature=0.5, n=1, max_tokens=4000, frequency_penalty=0
+    messages, model="gpt-3.5-turbo", temperature=0.5, n=1, max_tokens=4000, frequency_penalty=0
 ):
-
-    model_engine = "gpt-3.5-turbo"
-
+    token_ceiling = 4096
+    if model == 'gpt-4':
+        max_tokens = 8000
+        token_ceiling = 8000
     # Calculate the number of tokens in the messages
     tokens_used = sum([count_tokens(msg["content"]) for msg in messages])
-    tokens_available = 4096 - tokens_used
+    tokens_available = token_ceiling - tokens_used
 
     # Adjust max_tokens to not exceed the available tokens
     max_tokens = min(max_tokens, (tokens_available - 100))
 
     # Reduce max_tokens further if the total tokens exceed the model limit
-    if tokens_used + max_tokens > 4096:
-        max_tokens = 4096 - tokens_used - 10
+    if tokens_used + max_tokens > token_ceiling:
+        max_tokens = token_ceiling - tokens_used - 10
 
     if max_tokens < 1:
         max_tokens = 1
@@ -482,7 +543,7 @@ def generate_response(
         if retries < max_retries:
             try:
                 completion = openai.ChatCompletion.create(
-                    model=model_engine,
+                    model=model,
                     messages=messages,
                     n=n,
                     temperature=temperature,
@@ -503,51 +564,114 @@ def generate_response(
 
 
 
-def construct_prompt(
-    question: str,
-    topic_name: str,
-    separator: str = "\n*",
-    max_section_len: int = 1000 # Leave some space for the header and question
-    
+def construct_simple_prompt(
+    question: str 
 ):
     """
     Fetch relevant
     """
-    most_relevant_document_sections = fetch_context_from_pinecone(question, topic_name)
-
-    chosen_sections = [separator + section for section in most_relevant_document_sections]
+    most_relevant_document_sections = fetch_context_from_pinecone(question)
 
 
-    # Useful diagnostic information
-    print(f"Selected {len(chosen_sections)} document sections:")
-
-
-    header = (
-        """Answer the question as truthfully as possible using the provided context. If the answer is not contained within the text below, attempt to use the context and your knowledge to give an answer.  If the context cannot help you find an answer, say "I don't know."\n\nContext:\n"""
+    simple_prompt = (
+        """Answer the question as truthfully as possible using the provided context blocks. If the answer is not contained within the text below, attempt to use the context and your knowledge to give an answer.  If the context cannot help you find an answer, say "I don't know."\n\nContext:\n"""
     )
 
-    context = header + "".join(chosen_sections)
 
     messages = [
         {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": context},
-        {"role": "user", "content": f"Q: {question}\nA:"},
-    ]
+        {"role": "user", "content": simple_prompt}
+        ]
+    
+    for section in most_relevant_document_sections:
+        messages.append({"role": "user", "content": f"Context: {section}"})
+    
+    messages.append({"role": "user", "content": f"Q: {question}\nA:"})
+    
 
     return messages
 
 
-def answer_query_with_context(
+def construct_smart_prompt(
+    question: str 
+):
+    """
+    Fetch relevant
+    """
+    most_relevant_document_sections = fetch_context_from_pinecone(question)
+
+
+    smart_prompt = (
+        """Answer the question using the provided context blocks. If the question requires a degree of nuance and subjectivity to answer, do your best to give an informative and nuanced answer.  If the answer is not contained within the text below, attempt to use the context and your knowledge to give an answer.  If the context cannot help you find an answer, say "I don't know."\n\nContext:\n"""
+    )
+
+
+    messages = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": smart_prompt}
+        ]
+    
+    for section in most_relevant_document_sections:
+        messages.append({"role": "user", "content": f"Context: {section}"})
+    
+    messages.append({"role": "user", "content": f"Q: {question}\nA:"})
+    
+
+    return messages
+
+
+def simple_answer_agent(
     query: str,
-    topic_name: str,
+    model=FAST_CHAT_MODEL,
     show_prompt=False
 ):
-    messages = construct_prompt(query, topic_name)
+    messages = construct_simple_prompt(query)
 
     if show_prompt:
         print(messages)
 
-    response = generate_response(messages, temperature=0.5, n=1, max_tokens=1000, frequency_penalty=0)
+    response = generate_response(messages, temperature=0.2, n=1, max_tokens=1000, frequency_penalty=0)
     return response.strip(" \n")
 
 
+def smart_answer_agent(
+    query: str,
+    model=SMART_CHAT_MODEL,
+    show_prompt=False
+):
+    messages = construct_smart_prompt(query)
+
+    if show_prompt:
+        print(messages)
+
+    response = generate_response(messages, model=model, temperature=0.4, n=1, max_tokens=3000, frequency_penalty=0)
+    return response.strip(" \n")
+
+class Spinner:
+    def __init__(self, message="\nThinking..."):
+        self._message = message
+        self._running = False
+        self._spinner_thread = None
+
+    def start(self):
+        self._running = True
+        self._spinner_thread = threading.Thread(target=self._spin)
+        self._spinner_thread.start()
+
+    def stop(self):
+        self._running = False
+        self._spinner_thread.join()
+
+    def _spin(self):
+        spinner_chars = "|/-\\"
+        index = 0
+
+        while self._running:
+            sys.stdout.write(f"\r{self._message} {spinner_chars[index % len(spinner_chars)]}")
+            sys.stdout.flush()
+            time.sleep(0.1)
+            index += 1
+
+        # Clear the spinner line
+        sys.stdout.write("\r" + " " * (len(self._message) + 2))
+        sys.stdout.flush()

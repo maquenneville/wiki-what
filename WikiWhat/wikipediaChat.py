@@ -5,86 +5,101 @@ Created on Mon Apr  3 01:09:37 2023
 @author: marca
 """
 
-import pandas as pd
 from wikipediaContextQAHelpers import *
 
-
-
-
+    
+    
 def main():
-    title = input("Please enter a Wikipedia page title: ")
-    save_data = input("Do you want the chat data to be saved? (yes/no): ")
-    save_data = save_data.strip().lower() == "yes"
-    output_path = None
-    input_path = None
-    
-    if save_data:
-        output_path = input("Please enter the output path for the data: ")
-        print("Gathering the background data for this chat.  For more narrow focus wikipedia pages, this could take a couple minutes.  For wider focus, it could take several hours.")
-    else:
-        has_data = input("Do you already have chat data saved? (yes/no): ")
-        has_data = has_data.strip().lower() == "yes"
+    # Set initial state and select the simple answer agent
+    exit_program = False
+    answer_agent = simple_answer_agent
+    spinner = Spinner()
+
+    # Main loop for interacting with the user
+    while not exit_program:
+        title = input("Please enter a Wikipedia page title (type 'exit' to quit): ")
+        if title.lower() == "exit":
+            break
+
+        # Check if the topic's data is already in Pinecone
+        has_data = check_topic_exists_in_pinecone(title)
+        storage_title = title.replace(" ", "_").lower()
+
         if has_data:
-            input_path = input("Please enter the file path for the existing data: ")
-    
-    if input_path:
-        df = pd.read_csv(input_path)
-    else:
-        pages = find_related_pages(title)
-        df = create_dataframe(pages, output_filename=output_path)
-    
-    print(f"Ok, I'm ready for your questions about {title}.")
-    
-    while True:
-        question = input("Question: ")
-        
-        if question.lower() == "exit":
-            break
-        
-        answer = answer_query_with_context(question, df)
-        print(f"Answer: {answer}")
-        
-        follow_up = input('Press enter to ask another question, or enter "exit" to exit: ')
-        
-        if follow_up.lower() == "exit":
-            break
-    
-    print(f"I hope you learned something about {title}! Goodbye!")
-    
-    
-def main_pinecone():
-    title = input("Please enter a Wikipedia page title: ")
-    has_data = check_topic_exists_in_pinecone(title)
-    storage_title = title.replace(" ", "_").lower()
+            print(f"\n\nTopic available")
 
-    print(f"check_topic_exists_in_pinecone returned: {has_data}")
+        if not has_data:
+            # If the topic is not in Pinecone, gather data, calculate embeddings and store them in Pinecone
+            print("\n\nGathering the background data for this chat, calculating its embeddings, and loading them into Pinecone. For more narrow focus Wikipedia pages, this could take a couple of minutes. For wider focus, it could take a while.")
+            pages = find_related_pages(title)
+            page_titles = [page.title for page in pages]
+            df = create_dataframe(pages)
+            store_embeddings_in_pinecone(dataframe=df, topic_name=storage_title)
+            save_list_to_txt_file(PAGES_RECORD, page_titles)
 
-    if not has_data:
-        print("Gathering the background data for this chat, calculating it's embeddings and loading them into Pinecone. For more narrow focus wikipedia pages, this could take a couple minutes. For wider focus, it could take a while.")
-        pages = find_related_pages(title)
-        page_titles = [page.title for page in pages]
-        save_list_to_txt_file(PAGES_RECORD, page_titles)
-        df = create_dataframe(pages)
-        store_embeddings_in_pinecone(dataframe=df, topic_name=storage_title)
+        print(f"\n\nOk, I'm ready for your questions about {title}.\n\n")
 
-    print(f"Ok, I'm ready for your questions about {title}.")
-    
-    
-    while True:
-        question = input("Question (type 'exit' to quit): ")
+        # Inner loop for processing user commands and questions
+        while True:
+            command = input("Enter a question or a command (enter 'help' for additional commands): ").lower()
 
-        if question.lower() == "exit":
-            break
+            # Exit the program
+            if command == "exit":
+                exit_program = True
+                break
 
-        # Fetch context from Pinecone and answer the question
+            # Switch to another topic
+            if command == "switch topic":
+                break
 
-        answer = answer_query_with_context(question, topic_name=storage_title)
+            # Switch to the smart answer agent (GPT-4)
+            if command == "smart answer":
+                answer_agent = smart_answer_agent
+                print("Switched to smart answer agent.\n")
+                continue
 
-        print(f"Answer: {answer}")
+            # Switch to the simple answer agent (GPT-3.5-turbo)
+            if command == "simple answer":
+                answer_agent = simple_answer_agent
+                print("Switched to simple answer agent.\n")
+                continue
+
+            # Show the help text for available commands
+            if command == "help":
+                print("""
+                      Commands:
+
+                          switch topic: takes you back to enter a new Wikipedia page
+                          
+                          smart answer: switch to GPT-4 for question-answering
+                                              (warning: more expensive, use only for nuanced questions)
+                                              
+                          simple answer: switch back to GPT-3.5-turbo for question-answering
+                                              (good for most questions)
+                                              
+                          exit: quit program
+
+                      """)
+                continue
+
+            else:
+                # Start the spinner to indicate processing
+                spinner.start()
+                
+                # Fetch context from Pinecone and answer the question
+                answer = answer_agent(command)
+                
+                # Stop the spinner and display the answer
+                spinner.stop()
+                print(f"\n\nAnswer: {answer}\n\n")
+
+        if not exit_program:
+            print(f"\n\nI hope you learned something about {title}!\n\n")
+
+    print("Goodbye!")
 
 
 
-    print(f"I hope you learned something about {title}! Goodbye!")
 
 if __name__ == "__main__":
-    main_pinecone()
+    main()
