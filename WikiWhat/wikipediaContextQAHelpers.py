@@ -648,7 +648,7 @@ def smart_answer_agent(
     return response.strip(" \n")
 
 class Spinner:
-    def __init__(self, message="\nThinking..."):
+    def __init__(self, message="Thinking..."):
         self._message = message
         self._running = False
         self._spinner_thread = None
