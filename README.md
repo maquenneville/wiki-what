@@ -41,5 +41,6 @@ python wikipediachat.py
 
 # Notes
 
--As the script relies on first creating a table of related sections, the scope of the initial wiki page will vary the data gathering/processing time greatly.  For example, if you use "Sheaf toss", a very niche folk athletic event, it will take a few seconds.  If you use "Fishing", it could take hours.
--This chat agent tracks the pages that have been loaded into your index with the wiki_page_record.txt file.  This is to help prevent loading multiple copies of the same page.  As you use the program more and more, it will fill out your index with wikipedia context, and should slowly decrease the loading time of the wikipedia context.
+- As the script relies on first creating a table of related sections, the scope of the initial wiki page will vary the data gathering/processing time greatly.  For example, if you use "Sheaf toss", a very niche folk athletic event, it will take a few seconds.  If you use "Fishing", it could take hours.
+
+- This chat agent tracks the pages that have been loaded into your index with the wiki_page_record.txt file.  This is to help prevent loading multiple copies of the same page.  As you use the program more and more, it will fill out your index with wikipedia context, and should slowly decrease the loading time of the wikipedia context.
