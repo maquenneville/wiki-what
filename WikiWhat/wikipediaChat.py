@@ -17,27 +17,30 @@ def main():
 
     # Main loop for interacting with the user
     while not exit_program:
-        title = input("Please enter a Wikipedia page title (type 'exit' to quit): ")
+        title = input("Please enter a Wikipedia page title (type 'exit' to quit, 'skip' to skip data gathering): ")
         if title.lower() == "exit":
             break
 
-        # Check if the topic's data is already in Pinecone
-        has_data = check_topic_exists_in_pinecone(title)
-        storage_title = title.replace(" ", "_").lower()
+        skip_data_gathering = title.lower() == "skip"
 
-        if has_data:
-            print(f"\n\nTopic available")
+        if not skip_data_gathering:
+            # Check if the topic's data is already in Pinecone
+            has_data = check_topic_exists_in_pinecone(title)
+            storage_title = title.replace(" ", "_").lower()
 
-        if not has_data:
-            # If the topic is not in Pinecone, gather data, calculate embeddings and store them in Pinecone
-            print("\n\nGathering the background data for this chat, calculating its embeddings, and loading them into Pinecone. For more narrow focus Wikipedia pages, this could take a couple of minutes. For wider focus, it could take a while.")
-            pages = find_related_pages(title)
-            page_titles = [page.title for page in pages]
-            df = create_dataframe(pages)
-            store_embeddings_in_pinecone(dataframe=df, topic_name=storage_title)
-            save_list_to_txt_file(PAGES_RECORD, page_titles)
+            if has_data:
+                print(f"\n\nTopic available")
 
-        print(f"\n\nOk, I'm ready for your questions about {title}.\n\n")
+            if not has_data:
+                # If the topic is not in Pinecone, gather data, calculate embeddings and store them in Pinecone
+                print("\n\nGathering the background data for this chat, calculating its embeddings, and loading them into Pinecone. For more narrow focus Wikipedia pages, this could take a couple of minutes. For wider focus, it could take a while.")
+                pages = find_related_pages(title)
+                page_titles = [page.title for page in pages]
+                df = create_dataframe(pages)
+                store_embeddings_in_pinecone(dataframe=df, topic_name=storage_title)
+                save_list_to_txt_file(PAGES_RECORD, page_titles)
+
+            print(f"\n\nOk, I'm ready for your questions about {title}.\n\n")
 
         # Inner loop for processing user commands and questions
         while True:
@@ -97,6 +100,7 @@ def main():
             print(f"\n\nI hope you learned something about {title}!\n\n")
 
     print("Goodbye!")
+
 
 
 
