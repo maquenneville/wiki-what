@@ -6,11 +6,11 @@ This script creates a chatbot that answers questions based on a specific Wikiped
 # How to use
 
 0. Get your OpenAI API key if you don't have one already: https://platform.openai.com/overview
-Then, set up your Pinecone account, create an Index with this layout:
+Then, set up your Pinecone account: https://www.pinecone.io/, and create an Index with this layout:
 - Dimensions: 1536
 - Metric: cosine
 - pod type: p1
-Get your API key, Index environment and index name.
+Get your Pinecone API key, Index environment and Index name.
 
 Once you have your OpenAI key and your Pinecone env/key/name, enter then into their respective places in the config.ini file.  Then, open Command Prompt and cd into the cloned directory.
 
