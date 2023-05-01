@@ -18,7 +18,7 @@ Once you have your OpenAI key and your Pinecone env/key/name, enter then into th
 pip install -r requirements.txt
 
 2. Run the script:
-python wikipediachat.py
+python wiki_what.py
 
 3. Follow the prompts to input a Wikipedia page title. The chatbot will gather data, calculate embeddings, and store them in the Pinecone index if needed.
 
