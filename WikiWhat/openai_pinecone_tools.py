@@ -19,18 +19,16 @@ import asyncio
 from tqdm.asyncio import tqdm as async_tqdm
 import threading
 import nest_asyncio
+
 nest_asyncio.apply()
 
 openai.api_key = OPENAI_API_KEY
 
 
-def get_embedding(text: str, model: str=EMBEDDING_MODEL):
+def get_embedding(text: str, model: str = EMBEDDING_MODEL):
     while True:
         try:
-            result = openai.Embedding.create(
-              model=model,
-              input=text
-            )
+            result = openai.Embedding.create(model=model, input=text)
             break
         except (APIError, RateLimitError):
             print("OpenAI got grumpy, trying again in a few seconds...")
@@ -38,12 +36,11 @@ def get_embedding(text: str, model: str=EMBEDDING_MODEL):
     return result["data"][0]["embedding"]
 
 
-
-
 # This function is a helper function that runs the get_embedding function asynchronously.
 async def get_embedding_async(text, model):
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, get_embedding, text, model)
+
 
 # This function computes the document embeddings for a given dataframe containing Wikipedia segments.
 async def compute_doc_embeddings(df: pd.DataFrame, model: str = EMBEDDING_MODEL):
@@ -64,13 +61,15 @@ async def compute_doc_embeddings(df: pd.DataFrame, model: str = EMBEDDING_MODEL)
     progress.close()
 
     # Create a new dataframe with the computed embeddings.
-    embedding_columns = {f"embedding{idx}": [embedding[idx] for embedding in embeddings] for idx in range(len(embeddings[0]))}
+    embedding_columns = {
+        f"embedding{idx}": [embedding[idx] for embedding in embeddings]
+        for idx in range(len(embeddings[0]))
+    }
     embedding_df = pd.DataFrame(embedding_columns)
     # Concatenate the original dataframe with the embeddings dataframe.
     df = pd.concat([df, embedding_df], axis=1)
 
     return df
-
 
 
 def create_dataframe(pages, output_filename=None):
@@ -91,11 +90,18 @@ def create_dataframe(pages, output_filename=None):
     return df
 
 
-
 ### PINECONE FUNCTIONS ###
 
 
-def store_embeddings_in_pinecone(index=PINECONE_INDEX, namespace=PINECONE_NAMESPACE, pinecone_api_key=PINECONE_API_KEY, pinecone_env=PINECONE_ENV, csv_filepath=None, topic_name=None, dataframe=None):
+def store_embeddings_in_pinecone(
+    index=PINECONE_INDEX,
+    namespace=PINECONE_NAMESPACE,
+    pinecone_api_key=PINECONE_API_KEY,
+    pinecone_env=PINECONE_ENV,
+    csv_filepath=None,
+    topic_name=None,
+    dataframe=None,
+):
     # Initialize Pinecone
     pinecone.init(api_key=pinecone_api_key, environment=pinecone_env)
 
@@ -118,13 +124,13 @@ def store_embeddings_in_pinecone(index=PINECONE_INDEX, namespace=PINECONE_NAMESP
         # Iterate through each row in the dataframe
         for index, row in dataframe.iterrows():
             context_chunk = row["content"]
-            
+
             # Create a vector from the embeddings
             vector = [float(row[f"embedding{i}"]) for i in range(1536)]
-            
+
             # Create an index for Pinecone
             idx = f"wiki_{index}"
-            
+
             # Prepare metadata for upsert
             metadata = {"topic_name": topic_name, "context": context_chunk}
             vectors_to_upsert.append((idx, vector, metadata))
@@ -135,8 +141,7 @@ def store_embeddings_in_pinecone(index=PINECONE_INDEX, namespace=PINECONE_NAMESP
                     try:
                         # Upsert the batch of vectors to Pinecone
                         upsert_response = pinecone_index.upsert(
-                            vectors=vectors_to_upsert,
-                            namespace=namespace
+                            vectors=vectors_to_upsert, namespace=namespace
                         )
 
                         batch_count += 1
@@ -147,7 +152,9 @@ def store_embeddings_in_pinecone(index=PINECONE_INDEX, namespace=PINECONE_NAMESP
                         break
 
                     except pinecone.core.client.exceptions.ApiException:
-                        print("Pinecone is a little overwhelmed, trying again in a few seconds...")
+                        print(
+                            "Pinecone is a little overwhelmed, trying again in a few seconds..."
+                        )
                         time.sleep(10)
 
         # Close the progress bar after completing all upserts
@@ -157,10 +164,14 @@ def store_embeddings_in_pinecone(index=PINECONE_INDEX, namespace=PINECONE_NAMESP
         print("No dataframe to retrieve embeddings")
 
 
-
-
-
-def fetch_context_from_pinecone(query, top_n=5, index=PINECONE_INDEX, namespace=PINECONE_NAMESPACE, pinecone_api_key=PINECONE_API_KEY, pinecone_env=PINECONE_ENV):
+def fetch_context_from_pinecone(
+    query,
+    top_n=5,
+    index=PINECONE_INDEX,
+    namespace=PINECONE_NAMESPACE,
+    pinecone_api_key=PINECONE_API_KEY,
+    pinecone_env=PINECONE_ENV,
+):
     # Initialize Pinecone
     pinecone.init(api_key=pinecone_api_key, environment=pinecone_env)
 
@@ -169,7 +180,7 @@ def fetch_context_from_pinecone(query, top_n=5, index=PINECONE_INDEX, namespace=
 
     # Instantiate Pinecone's Index
     pinecone_index = pinecone.Index(index_name=index)
-    
+
     # Try querying Pinecone for the most similar embeddings until successful
     while True:
         try:
@@ -179,26 +190,31 @@ def fetch_context_from_pinecone(query, top_n=5, index=PINECONE_INDEX, namespace=
                 top_k=top_n,
                 include_values=False,
                 include_metadata=True,
-                vector=query_embedding
+                vector=query_embedding,
             )
             # Break the loop if the query is successful
             break
-        
+
         except PineconeProtocolError:
             print("Pinecone needs a moment....")
             time.sleep(3)
             continue
-    
+
     # Retrieve metadata for the relevant embeddings
-    context_chunks = [match['metadata']['context'] for match in query_response['matches']]
-    
+    context_chunks = [
+        match["metadata"]["context"] for match in query_response["matches"]
+    ]
+
     return context_chunks
 
 
-
-
-
-def check_topic_exists_in_pinecone(topic_name: str, index:str=PINECONE_INDEX, namespace: str=PINECONE_NAMESPACE, pinecone_api_key: str=PINECONE_API_KEY, pinecone_env: str=PINECONE_ENV) -> bool:
+def check_topic_exists_in_pinecone(
+    topic_name: str,
+    index: str = PINECONE_INDEX,
+    namespace: str = PINECONE_NAMESPACE,
+    pinecone_api_key: str = PINECONE_API_KEY,
+    pinecone_env: str = PINECONE_ENV,
+) -> bool:
     pinecone.init(api_key=pinecone_api_key, environment=pinecone_env)
 
     topic_name = f"wiki_{topic_name}"
@@ -213,23 +229,25 @@ def check_topic_exists_in_pinecone(topic_name: str, index:str=PINECONE_INDEX, na
         include_values=False,
         include_metadata=True,
         filter=metadata_filter,
-        vector=query_embedding
+        vector=query_embedding,
     )
-    
 
-
-    return len(query_response['matches']) != 0
-
-
+    return len(query_response["matches"]) != 0
 
 
 ### END PINECONE
 
+
 def generate_response(
-    messages, model="gpt-3.5-turbo", temperature=0.5, n=1, max_tokens=4000, frequency_penalty=0
+    messages,
+    model="gpt-3.5-turbo",
+    temperature=0.5,
+    n=1,
+    max_tokens=4000,
+    frequency_penalty=0,
 ):
     token_ceiling = 4096
-    if model == 'gpt-4':
+    if model == "gpt-4":
         max_tokens = 8000
         token_ceiling = 8000
     # Calculate the number of tokens in the messages

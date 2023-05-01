@@ -8,8 +8,8 @@ Created on Sun Apr 30 00:35:35 2023
 from wiki_tools import *
 from openai_pinecone_tools import *
 from wiki_agents import *
-    
-    
+
+
 def main():
     # Set initial state and select the simple answer agent
     exit_program = False
@@ -18,7 +18,9 @@ def main():
 
     # Main loop for interacting with the user
     while not exit_program:
-        title = input("Please enter a Wikipedia page title (type 'exit' to quit, 'skip' to skip data gathering): ")
+        title = input(
+            "Please enter a Wikipedia page title (type 'exit' to quit, 'skip' to skip data gathering): "
+        )
         if title.lower() == "exit":
             break
 
@@ -26,7 +28,7 @@ def main():
 
         if not skip_data_gathering:
             # Check if the topic's data is already in Pinecone
-            
+
             storage_title = title.replace(" ", "_").lower()
             has_data = check_topic_exists_in_pinecone(storage_title)
 
@@ -35,7 +37,9 @@ def main():
 
             if not has_data:
                 # If the topic is not in Pinecone, gather data, calculate embeddings and store them in Pinecone
-                print("\n\nGathering the background data for this chat, calculating its embeddings, and loading them into Pinecone. For more narrow focus Wikipedia pages, this could take a couple of minutes. For wider focus, it could take over an hour.\n")
+                print(
+                    "\n\nGathering the background data for this chat, calculating its embeddings, and loading them into Pinecone. For more narrow focus Wikipedia pages, this could take a couple of minutes. For wider focus, it could take over an hour.\n"
+                )
                 pages = find_related_pages(title)
                 page_titles = [page.title for page in pages]
                 df = create_dataframe(pages)
@@ -46,7 +50,9 @@ def main():
 
         # Inner loop for processing user commands and questions
         while True:
-            command = input("Enter a question or a command (enter 'help' for additional commands): ").lower()
+            command = input(
+                "Enter a question or a command (enter 'help' for additional commands): "
+            ).lower()
 
             # Exit the program
             if command == "exit":
@@ -71,7 +77,8 @@ def main():
 
             # Show the help text for available commands
             if command == "help":
-                print("""
+                print(
+                    """
                       Commands:
 
                           switch topic: takes you back to enter a new Wikipedia page
@@ -84,16 +91,17 @@ def main():
                                               
                           exit: quit program
 
-                      """)
+                      """
+                )
                 continue
 
             else:
                 # Start the spinner to indicate processing
                 spinner.start()
-                
+
                 # Fetch context from Pinecone and answer the question
                 answer = answer_agent(command)
-                
+
                 # Stop the spinner and display the answer
                 spinner.stop()
                 print(f"\n\nAnswer: {answer}\n\n")
@@ -102,9 +110,6 @@ def main():
             print(f"\n\nI hope you learned something about {title}!\n\n")
 
     print("\nGoodbye!")
-
-
-
 
 
 if __name__ == "__main__":
