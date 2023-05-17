@@ -16,7 +16,7 @@ def construct_simple_prompt(question: str):
     """
     most_relevant_document_sections = fetch_context_from_pinecone(question)
 
-    simple_prompt = """Answer the question as truthfully as possible using the provided context blocks. If the answer is not contained within the text below, attempt to use the context and your knowledge to give an answer.  If the context cannot help you find an answer, say "I don't know."\n\nContext:\n"""
+    simple_prompt = """Answer the question as truthfully as possible using the provided context blocks. Make your answers highly informative and detailed.  If the answer is not contained within the text below, attempt to use the context and your knowledge to give an answer.  If the context cannot help you find an answer, say "I don't know."\n\nContext:\n"""
 
     messages = [
         {"role": "system", "content": "You are a helpful assistant."},
@@ -59,7 +59,7 @@ def simple_answer_agent(query: str, model=FAST_CHAT_MODEL, show_prompt=False):
         print(messages)
 
     response = generate_response(
-        messages, temperature=0.2, n=1, max_tokens=1000, frequency_penalty=0
+        messages, temperature=0.2, n=1, max_tokens=2000, frequency_penalty=0
     )
     return response.strip(" \n")
 

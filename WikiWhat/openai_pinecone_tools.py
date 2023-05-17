@@ -11,7 +11,7 @@ import time
 import pandas as pd
 import numpy as np
 import openai
-from openai.error import RateLimitError
+from openai.error import RateLimitError, APIError
 import pinecone
 from pinecone import PineconeProtocolError
 from tqdm import tqdm
