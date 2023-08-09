@@ -1,18 +1,23 @@
 # WikiWhat
-a Q&amp;A tool for Wikipedia-based, Pinecone-powered, context-informed GPT chat
+a Q&amp;A tool for Wikipedia-based context-informed GPT chat
 
 This script creates a chatbot that answers questions based on a specific Wikipedia page and its related pages. The chatbot uses context from the specified Wikipedia page and related pages to provide more accurate and detailed answers.
 
 # How to use
 
 0. Get your OpenAI API key if you don't have one already: https://platform.openai.com/overview
-Then, set up your Pinecone account: https://www.pinecone.io/, and create an Index with this layout:
+1. Then, set up your preffered vector memory store
+   Pinecone: Get your Pinecone account: https://www.pinecone.io/, and create an Index with this layout:
 - Dimensions: 1536
 - Metric: cosine
 - pod type: p1
 Get your Pinecone API key, Index environment and Index name.
 
-Once you have your OpenAI key and your Pinecone env/key/name, enter then into their respective places in the config.ini file.  Then, open Command Prompt and cd into the cloned directory.
+  Chroma: requires no API key
+
+Once you have your credentials, enter them into their respective places in the config.ini file.  If using Chroma, ensure you set your preferred collection name.
+
+Then, open Command Prompt and cd into the cloned directory.
 
 1. Make sure you have installed the required dependencies:
 pip install -r requirements.txt
@@ -44,6 +49,10 @@ python wiki_what.py
 
 - This chat agent tracks the pages that have been loaded into your index with the wiki_page_record.txt file.  This is to help prevent loading multiple copies of the same page.  As you use the program more and more, it will fill out your index with wikipedia context, and should slowly decrease the loading time of the wikipedia context.
 
-- Most recent update added an option for "smart answer".  This agent is powered by GPT-4 and primed to give more nuanced, detailed and informative answers.  This is best used for complex/difficult questions, as it will be less likely to give up and say "I don't know", and also is much more expensive.
+- There's an option for "smart answer".  This agent is powered by GPT-4 and primed to give more nuanced, detailed and informative answers.  This is best used for complex/difficult questions, as it will be less likely to give up and say "I don't know", and also is much more expensive.
+
+# Updates
+
+8/9/2023 - Total overhaul of codebase, for now using Chroma as default memory
 
 
