@@ -7,11 +7,15 @@ This script creates a chatbot that answers questions based on a specific Wikiped
 
 0. Get your OpenAI API key if you don't have one already: https://platform.openai.com/overview
 1. Then, set up your preffered vector memory store
+
+
    Pinecone: Get your Pinecone account: https://www.pinecone.io/, and create an Index with this layout:
 - Dimensions: 1536
 - Metric: cosine
 - pod type: p1
 Get your Pinecone API key, Index environment and Index name.
+
+
 
   Chroma: requires no API key
 
