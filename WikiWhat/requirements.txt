@@ -6,3 +6,6 @@ tiktoken
 openai
 pinecone-client
 tqdm
+chromadb
+claude-api
+nest-asyncio

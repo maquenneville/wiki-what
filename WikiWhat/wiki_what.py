@@ -7,11 +7,27 @@ Created on Tue Aug  8 23:26:03 2023
 
 from typing import List
 from chroma_memory import ChromaMemory
+from pinecone_memory import PineconeMemory
 from wiki_gather import WikiGather
 from simple_bot import SimpleBot
+from claude_bot import ClaudeBot
 import threading
 import sys
 import time
+import configparser
+
+def get_preferred_memory_llm():
+    config = configparser.ConfigParser()
+    config.read("config.ini")
+
+    preferred_memory = config.get("API_KEYS", "Preferred_Memory")
+    preferred_llm = config.get("API_KEYS", "Preferred_LLM")
+    return preferred_memory, preferred_llm
+
+PREFERRED_MEMORY, PREFERRED_LLM = get_preferred_memory_llm()
+
+
+    
 
 class Spinner:
     def __init__(self, message="Thinking..."):
@@ -46,14 +62,30 @@ class Spinner:
         
 
 def main():
+    
+    print("Welcome to WikiWhat!")
     # Set initial state and select the simple answer agent
     exit_program = False
     spinner = Spinner()
-    bot = SimpleBot("""Answer the question using the provided context blocks. If the question requires a degree of nuance and subjectivity to answer, do your best to give an informative and nuanced answer.  If the answer is not contained within the text below, attempt to use the context and your knowledge to give an answer.  If the context cannot help you find an answer, say "I don't know."\n\nContext:\n""")
-    bot.fast_agent() # Using GPT-3.5-turbo as the default
+    
     wiki_gather = WikiGather()
-    chroma_memory = ChromaMemory(collection_name="wiki_collection")
-
+    
+    if PREFERRED_MEMORY == "chroma":
+        memory = ChromaMemory(collection_name="wiki_collection", storage=r"C:\Users\marca\Desktop\Coding\AI\embeddings\WikiWhat\.chroma")
+        print("\nUsing Chroma memory\n")
+    
+    else:
+        memory = PineconeMemory()
+        print("\nUsing Pinecone memory\n")
+        
+    if PREFERRED_LLM == "claude":
+        bot = ClaudeBot()
+        print("\nUsing Anthropic's Claude 2 to power conversation\n")
+    else:
+        bot = SimpleBot("""Answer the question using the provided context blocks. If the question requires a degree of nuance and subjectivity to answer, do your best to give an informative and nuanced answer.  If the answer is not contained within the text below, attempt to use the context and your knowledge to give an answer.  If the context cannot help you find an answer, say "I don't know."\n\nContext:\n""")
+        bot.fast_agent() # Using GPT-3.5-turbo as the default
+        print("\nUsing OpenAI's ChatGPT to power conversation\n")
+        
     # Main loop for interacting with the user
     while not exit_program:
         title = input(
@@ -67,11 +99,11 @@ def main():
         if not skip_data_gathering:
             # Gather data, calculate embeddings, and store them in Chroma
             print(
-                "\n\nGathering the background data for this chat, calculating its embeddings, and loading them into Chroma. This could take some time depending on the topic's complexity.\n"
+                f"\n\nGathering the background data for this chat, calculating its embeddings, and loading them into {PREFERRED_MEMORY}. This could take some time depending on the topic's complexity.\n"
             )
             wiki_gather.gather(title)
             wiki_chunks = wiki_gather.dump()
-            chroma_memory.store(wiki_chunks)
+            memory.store(wiki_chunks)
 
             print(f"\n\nOk, I'm ready for your questions about {title}.\n\n")
 
@@ -104,27 +136,43 @@ def main():
 
             # Show the help text for available commands
             if command == "help":
-                print(
-                    """
-                      Commands:
-                          switch topic: takes you back to enter a new Wikipedia page
-                          smart answer: switch to GPT-4 for question-answering
-                                        (warning: more expensive, use only for nuanced questions)
-                          simple answer: switch back to GPT-3.5-turbo for question-answering
-                                        (good for most questions)
-                          exit: quit program
-                      """
-                )
-                continue
+                
+                if PREFERRED_LLM == "chatgpt":
+                    print(
+                        """
+                          Commands:
+                              switch topic: takes you back to enter a new Wikipedia page
+                              smart answer: switch to GPT-4 for question-answering
+                                            (warning: more expensive, use only for nuanced questions)
+                              simple answer: switch back to GPT-3.5-turbo for question-answering
+                                            (good for most questions)
+                              exit: quit program
+                          """
+                    )
+                    continue
+                
+                else:
+                    print(
+                        """
+                          Commands:
+                              switch topic: takes you back to enter a new Wikipedia page
+                              exit: quit program
+                          """
+                    )
+                    continue
 
             else:
                 # Fetch context from Chroma and add it to the bot's primer
-                context_chunks = chroma_memory.fetch_context(command)
+                context_chunks = memory.fetch_context(command)
 
                 # Generate the answer using the bot
                 spinner.start()
-                response = bot.chat(command, context_chunks)
-                answer = response['choices'][0]['message']['content']
+                response = bot.chat(command, context_chunks=context_chunks)
+                
+                if PREFERRED_LLM == "claude":
+                    answer = response
+                else:    
+                    answer = response['choices'][0]['message']['content']
                 spinner.stop()
                 print(f"\n\nAnswer: {answer}\n\n")
 

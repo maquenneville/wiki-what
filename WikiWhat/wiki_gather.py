@@ -55,7 +55,10 @@ class WikiGather:
             page = wikipedia.page(title, auto_suggest=False)
             return page, False
         except wikipedia.DisambiguationError as e:
-            return wikipedia.page(e.options[0], auto_suggest=False), True
+            try:
+                return wikipedia.page(e.options[0], auto_suggest=False), True
+            except wikipedia.DisambiguationError:
+                return None, False
         except Exception:
             return None, False
 
