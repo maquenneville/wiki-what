@@ -34,6 +34,9 @@ Get your Pinecone API key, Index environment and Index name, then update the con
 
 Requires no API key, simply update the config file with your preferred collection name.
 
+
+
+
 3. Open Command Prompt and cd into the cloned directory.
 
 4. Make sure you have installed the required dependencies:
