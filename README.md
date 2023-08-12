@@ -73,7 +73,7 @@ python wiki_what.py
 
 # Updates
 
-8/9/2023 - Total overhaul of codebase, for now using Chroma as default memory
-8/11/2023 - Continued overhaul, new async Embedder class for faster embedding, can now use ChatGPT or Claude 2, Chroma or Pinecone
+- 8/9/2023 - Total overhaul of codebase, for now using Chroma as default memory
+- 8/11/2023 - Continued overhaul, new async Embedder class for faster embedding, can now use ChatGPT or Claude 2, Chroma or Pinecone
 
 
