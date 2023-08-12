@@ -71,7 +71,7 @@ def main():
     wiki_gather = WikiGather()
     
     if PREFERRED_MEMORY == "chroma":
-        memory = ChromaMemory(collection_name="wiki_collection", storage=r"C:\Users\marca\Desktop\Coding\AI\embeddings\WikiWhat\.chroma")
+        memory = ChromaMemory()
         print("\nUsing Chroma memory\n")
     
     else:
